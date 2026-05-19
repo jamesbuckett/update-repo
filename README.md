@@ -15,7 +15,7 @@ Generates publishable scaffolding for any GitHub-backed git repo in a single pas
 
 ```bash
 git clone https://github.com/jamesbuckett/update-repo.git ~/.claude/skills/update-repo
-# Then, inside any GitHub-backed repo, ask Claude: "update this repo"
+# Then, inside any GitHub-backed repo, ask Claude to invoke the skill by its trigger phrase.
 ```
 
 ## Usage
