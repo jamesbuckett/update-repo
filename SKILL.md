@@ -1,6 +1,6 @@
 ---
 name: skill-update-repo
-description: Scaffold or refresh a GitHub repository's public-facing metadata in one shot. Use when the user says "update this repo", "scaffold this repo", "set up README and license", "make this repo presentable", "add badges to my README", "update repo topics", "write a README for this project", "add an MIT license", "polish my GitHub repo", or "set GitHub topics". Detects repo intent from manifests and code, surfaces it for confirmation, then writes a fresh README.md (with license/stars/last-commit/issues badges), writes an MIT LICENSE, sets repository topics via gh, and commits and pushes. Runs on $(pwd) — no path argument. Skip only if the user wants a partial change (e.g., "just add one badge", "edit this README section") rather than a full scaffold.
+description: Scaffold or refresh a GitHub repository's public-facing metadata in one shot. Use when the user says "update this repo", "scaffold this repo", "set up README and license", "make this repo presentable", "add badges to my README", "update repo topics", "write a README for this project", "add an MIT license", "polish my GitHub repo", or "set GitHub topics". Detects repo intent from manifests and code, surfaces it for confirmation, then writes a fresh README.md (with license/stars/last-commit/issues badges), writes an MIT LICENSE, sets repository topics, syncs the repo description (and homepage when Pages is enabled) via gh, then commits, pushes, and verifies the round-trip on the remote. Runs on $(pwd) — no path argument. Skip only if the user wants a partial change (e.g., "just add one badge", "edit this README section") rather than a full scaffold.
 ---
 
 # skill-update-repo
@@ -220,9 +220,11 @@ Write LICENSE to `LICENSE` (no extension — that's the GitHub convention).
 
 ---
 
-### Phase F — Update repository topics
+### Phase F — Update repository metadata
 
-PUT replaces the full topic list, which gives "set, not append" semantics — that's what the user expects from "update topics".
+Three GitHub-side fields get synced in this phase: topics, the repo description shown on the card, and the homepage URL (only when Pages is enabled and no homepage is already set). All three are best-effort — failures warn in Phase H but never abort. The README + LICENSE work has standalone value; losing GitHub-side metadata shouldn't unwind it.
+
+**Topics.** PUT replaces the full list, which gives "set, not append" semantics — that's what the user expects from "update topics".
 
 ```bash
 gh api -X PUT "repos/${OWNER}/${REPO}/topics" \
@@ -232,13 +234,44 @@ gh api -X PUT "repos/${OWNER}/${REPO}/topics" \
 # ...one -f flag per topic
 ```
 
-If the PUT fails (network, 403, rate limit), **do not abort**. Continue with the commit and push, then at the end of Phase H print a warning:
+After the PUT, fetch the list back and compare. If the round-trip diverges (e.g., names normalized to empty, server-side filter, silent rejection), capture a warning for Phase H — do not retry inline.
+
+```bash
+EXPECTED=$(printf '%s\n' "${TOPICS[@]}" | sort -u | paste -sd, -)
+ACTUAL=$(gh api "repos/${OWNER}/${REPO}/topics" --jq '.names | sort | join(",")' 2>/dev/null || true)
+[ "$EXPECTED" = "$ACTUAL" ]   # else: WARN_TOPICS
+```
+
+**Description.** The README puts the one-line description in a `>` callout, but the repo card on github.com is a separate field. Sync them so the same sentence appears in both places.
+
+```bash
+gh repo edit "${OWNER}/${REPO}" --description "${ONE_LINE_DESCRIPTION}"
+```
+
+**Homepage.** Skip entirely if the repo already has a non-empty `homepageUrl` — the user picked one already; don't clobber. Otherwise, if GitHub Pages is enabled, set the homepage to the Pages URL.
+
+```bash
+EXISTING=$(gh repo view "${OWNER}/${REPO}" --json homepageUrl --jq '.homepageUrl // ""')
+if [ -z "$EXISTING" ]; then
+  PAGES_URL=$(gh api "repos/${OWNER}/${REPO}/pages" --jq '.html_url' 2>/dev/null) || PAGES_URL=""
+  case "$PAGES_URL" in
+    https://*) gh repo edit "${OWNER}/${REPO}" --homepage "$PAGES_URL" ;;
+  esac
+fi
+```
+
+**Critical:** on a 404 (Pages not enabled), `gh api` writes the error JSON body to stdout *and* exits non-zero. Use `|| PAGES_URL=""` (not `|| true`) to reset the variable on failure, and gate the edit on `case https://*)` to refuse any captured value that isn't a real URL. A naive `[ -n "$PAGES_URL" ]` will accept JSON garbage and clobber the repo card with `{"message":"Not Found",...}`.
+
+Do not invent homepage URLs from any other signal (e.g., a `docs/` directory, a guessed deploy URL, the repo name). Pages-enabled is the only signal with no false positives.
+
+If any of topics / description / homepage individually fail (non-zero exit, network error, 403), capture the warning text and continue. Warning lines that may surface in Phase H:
 
 ```
-Topics were not updated. Retry: gh api -X PUT "repos/${OWNER}/${REPO}/topics" -f 'names[]=…' -f 'names[]=…'
+Topics were not updated. Retry: gh api -X PUT "repos/${OWNER}/${REPO}/topics" -f 'names[]=…'
+Topics on remote do not match what was set. Expected: <list>. Actual: <list>.
+Description was not updated. Retry: gh repo edit "${OWNER}/${REPO}" --description "…"
+Homepage was not updated. Retry: gh repo edit "${OWNER}/${REPO}" --homepage "…"
 ```
-
-The README + LICENSE work has standalone value; losing topics shouldn't unwind it.
 
 ---
 
@@ -278,21 +311,47 @@ If push is rejected (non-fast-forward), **do not force-push**. Force-pushing is 
 Push was rejected (remote has commits this branch doesn't). Run: git pull --rebase, then re-invoke skill-update-repo.
 ```
 
+After a successful push, verify the commit actually reached the remote at the branch tip. This catches edge cases where `git push` succeeded locally but server-side rules (branch protections, pre-receive hooks, squash policies) rewrote or rejected the commit silently.
+
+```bash
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(gh api "repos/${OWNER}/${REPO}/branches/${BRANCH}" --jq '.commit.sha' 2>/dev/null || true)
+[ "$LOCAL_SHA" = "$REMOTE_SHA" ]   # else: WARN_PUSH
+```
+
+If the SHAs diverge, capture a warning for Phase H. Do not roll back the local commit — the user can compare the two and decide.
+
+```
+Pushed but remote tip does not match local HEAD. Local: <sha>. Remote: <sha>. Inspect with: git log origin/${BRANCH}..HEAD
+```
+
+Skip this verification on the idempotent-re-run path (the "nothing to commit" branch printed earlier) — there's nothing to verify.
+
 ---
 
 ### Phase H — Report
 
-Print a brief summary so the user sees the result without scrolling. Keep it under 8 lines.
+Print a brief summary so the user sees the result without scrolling. Keep it under 10 lines.
 
 ```
 skill-update-repo complete.
-  Files written:   README.md, LICENSE
-  Topics set:      topic-a, topic-b, topic-c
-  Commit:          <short-sha>
-  Repo URL:        https://github.com/<owner>/<repo>
+  Files written:    README.md, LICENSE
+  Topics set:       topic-a, topic-b, topic-c
+  Description:      <one-line description>
+  Homepage:         <url or "—">
+  Commit:           <short-sha>
+  Push verified:    yes
+  Repo URL:         https://github.com/<owner>/<repo>
 ```
 
-Append any warnings from earlier phases (e.g., topics PUT failed) on their own line.
+After the summary, append any captured warnings from Phases F and G on their own lines. Each warning carries a retry command so the user can act without re-deriving the right gh invocation. Possible warnings:
+
+- `WARN_TOPICS` — topics PUT failed, or round-trip showed a mismatch
+- `WARN_DESCRIPTION` — description sync failed
+- `WARN_HOMEPAGE` — homepage sync failed (only when sync was actually attempted)
+- `WARN_PUSH` — local HEAD ≠ remote branch tip after push
+
+If all four are clean, omit the warning section entirely.
 
 ---
 
@@ -307,7 +366,12 @@ Append any warnings from earlier phases (e.g., topics PUT failed) on their own l
 | `gh auth status` fails | Abort; instruct `gh auth login`. |
 | Author unresolvable | Abort in Phase D; instruct `git config --global user.name`. |
 | Topics PUT fails | Continue; warn at end with retry command. |
+| Topics round-trip mismatch | Continue; warn at end with expected vs. actual list. |
+| Description sync fails | Continue; warn at end with retry command. |
+| Homepage sync fails | Continue; warn at end with retry command. |
+| GitHub Pages not enabled, or `homepageUrl` already set | Skip homepage sync silently. |
 | Push rejected | Stop; instruct `git pull --rebase`. |
+| Push SHA verification mismatch | Continue; warn at end with local vs. remote SHA. |
 | Empty repo (no commits, no files) | Skip detection; ask user for all intent fields directly. |
 | Zero commits | First push uses `git push -u origin <branch>`. |
 | Pre-existing README/LICENSE | Overwrite (per spec); mention in confirmation summary. |
