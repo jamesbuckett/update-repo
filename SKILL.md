@@ -1,9 +1,9 @@
 ---
-name: update-repo
+name: skill-update-repo
 description: Scaffold or refresh a GitHub repository's public-facing metadata in one shot. Use when the user says "update this repo", "scaffold this repo", "set up README and license", "make this repo presentable", "add badges to my README", "update repo topics", "write a README for this project", "add an MIT license", "polish my GitHub repo", or "set GitHub topics". Detects repo intent from manifests and code, surfaces it for confirmation, then writes a fresh README.md (with license/stars/last-commit/issues badges), writes an MIT LICENSE, sets repository topics via gh, and commits and pushes. Runs on $(pwd) — no path argument. Skip only if the user wants a partial change (e.g., "just add one badge", "edit this README section") rather than a full scaffold.
 ---
 
-# update-repo
+# skill-update-repo
 
 This skill takes the current working directory — assumed to be a GitHub-backed git repo — and produces the public-facing scaffolding: a tailored README.md, an MIT LICENSE, the four standard badges, and a curated topic list, then commits and pushes the changes. When it finishes, the repo is ready to share.
 
@@ -35,10 +35,10 @@ Failure messages (use the exact fix command):
 
 | Failure | Message |
 |---|---|
-| Not a git repo | `update-repo must be run inside a git repo. cwd=$(pwd)` |
+| Not a git repo | `skill-update-repo must be run inside a git repo. cwd=$(pwd)` |
 | Detached HEAD | `Checkout a branch first: git switch <branch>` |
 | No origin | `Add a remote: git remote add origin git@github.com:OWNER/REPO.git` |
-| Not GitHub | `update-repo is GitHub-specific. Origin is <url>.` |
+| Not GitHub | `skill-update-repo is GitHub-specific. Origin is <url>.` |
 | gh not authenticated | `Run: gh auth login` |
 
 Parse `OWNER` and `REPO` from the origin URL. Handle both forms and strip a trailing `.git` if present:
@@ -172,12 +172,12 @@ Read the templates and substitute placeholders, then write to repo root with the
 
 After substitution, collapse any runs of 3+ consecutive newlines down to 2 — empty conditional blocks otherwise leave double-blank lines that look untidy.
 
-**Quick Start blocks by category or primary language.** Each block consists of `## Quick Start`, a blank line, a fenced bash code block with the canonical 2-step bootstrap. Compose from this table; do not invent commands the language doesn't use. **Category takes precedence over language** — a `Claude Code skill` or `plugin` repo gets the install-into-`~/.claude/...` bootstrap regardless of what `.sh` or `.md` files it contains, because the user's mental model for a skill is "install it", not "build it".
+**Quick Start blocks by category or primary language.** Each block consists of `## Quick Start`, a blank line, and a fenced bash code block with the canonical bootstrap commands. Compose from this table; do not invent commands the language doesn't use. **Category takes precedence over language** — a `Claude Code skill` or `plugin` repo gets the install-into-`~/.claude/...` bootstrap regardless of what `.sh` or `.md` files it contains, because the user's mental model for a skill is "install it", not "build it".
 
 | Category / Language | Lines inside the bash fence |
 |---|---|
-| Claude Code skill | `git clone https://github.com/{{OWNER}}/{{REPO}}.git ~/.claude/skills/{{REPO}}` then `# Then, inside any GitHub-backed repo, ask Claude to invoke the skill by its trigger phrase.` |
-| plugin | `git clone https://github.com/{{OWNER}}/{{REPO}}.git ~/.claude/plugins/{{REPO}}` then `# Then restart Claude Code so the plugin is loaded.` |
+| Claude Code skill | See **Skill / plugin Quick Start blocks** below. |
+| plugin | See **Skill / plugin Quick Start blocks** below. |
 | Node | `npm install` then `npm start` |
 | Python | `pip install -r requirements.txt   # or: pip install -e .` then `python -m <module>` |
 | Go | `go build ./...` then `go run ./cmd/<binary>` |
@@ -187,6 +187,27 @@ After substitution, collapse any runs of 3+ consecutive newlines down to 2 — e
 | PHP | `composer install` then `php -S localhost:8000 -t public` |
 | Shell | `chmod +x <script>.sh` then `./<script>.sh` |
 | HTML / single-file / unknown | (empty string — omit the section entirely) |
+
+**Skill / plugin Quick Start blocks.** For these two categories, the Quick Start ships two install options in the same fenced block — a direct clone (recommended) and a symlink-from-a-working-copy variant (for users who want their edits to propagate without re-cloning).
+
+For `Claude Code skill`:
+
+````markdown
+## Quick Start
+
+```bash
+# Direct install (recommended)
+git clone https://github.com/{{OWNER}}/{{REPO}}.git ~/.claude/skills/{{REPO}}
+
+# Or: symlink from a working copy (for active development)
+git clone https://github.com/{{OWNER}}/{{REPO}}.git ~/projects/{{REPO}}
+ln -s ~/projects/{{REPO}} ~/.claude/skills/{{REPO}}
+```
+
+Then, inside any GitHub-backed repo, ask Claude to invoke the skill by its trigger phrase.
+````
+
+For `plugin`, substitute `~/.claude/plugins/` for `~/.claude/skills/` and replace the trailing line with `Then restart Claude Code so the plugin is loaded.`
 
 **LICENSE placeholder substitution:**
 
@@ -235,7 +256,7 @@ Stage and commit:
 
 ```bash
 git add README.md LICENSE          # or 'git add -A' if user chose "stage everything"
-git commit -m "docs: scaffold README and MIT LICENSE via update-repo"
+git commit -m "docs: scaffold README and MIT LICENSE via skill-update-repo"
 ```
 
 If `git commit` fails because there is nothing to commit (idempotent re-run on a repo that already has the same content), treat as success and skip the push step. Print: `No changes to commit — README and LICENSE already up to date.`
@@ -254,7 +275,7 @@ fi
 If push is rejected (non-fast-forward), **do not force-push**. Force-pushing is destructive and unrelated to the skill's purpose. Stop and print:
 
 ```
-Push was rejected (remote has commits this branch doesn't). Run: git pull --rebase, then re-invoke update-repo.
+Push was rejected (remote has commits this branch doesn't). Run: git pull --rebase, then re-invoke skill-update-repo.
 ```
 
 ---
@@ -264,7 +285,7 @@ Push was rejected (remote has commits this branch doesn't). Run: git pull --reba
 Print a brief summary so the user sees the result without scrolling. Keep it under 8 lines.
 
 ```
-update-repo complete.
+skill-update-repo complete.
   Files written:   README.md, LICENSE
   Topics set:      topic-a, topic-b, topic-c
   Commit:          <short-sha>
